@@ -31,6 +31,14 @@
 //! Documents missing the sort field come after all valued documents; equal
 //! values fall back to document-key order in both directions.
 //!
+//! Batches of documents can be written in one call:
+//! [`SearchIndex::insert_batch`] applies documents in input order exactly
+//! like repeated [`SearchIndex::insert`] and returns the replaced document
+//! for each position, while [`SearchIndex::insert_batch_with_schema`]
+//! validates the entire batch first — schema violations and duplicate keys
+//! within the batch surface as distinct [`BatchError`] variants carrying the
+//! failing position and key, and any failure leaves the index untouched.
+//!
 //! ```
 //! use strata_search::{Document, SearchIndex};
 //!
@@ -141,6 +149,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod batch;
 mod document;
 mod facet;
 mod filter;
@@ -148,6 +157,7 @@ mod index;
 mod schema;
 mod sort;
 
+pub use batch::BatchError;
 pub use document::{Document, DocumentError};
 pub use facet::{FacetCount, FacetError};
 pub use filter::{FieldFilter, FilterError};

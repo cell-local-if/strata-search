@@ -2,8 +2,8 @@ use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    Document, FacetCount, FacetError, FieldFilter, FieldValue, FilterError, Schema, SchemaError,
-    SortDirection, SortError,
+    BatchError, Document, FacetCount, FacetError, FieldFilter, FieldValue, FilterError, Schema,
+    SchemaError, SortDirection, SortError,
 };
 
 /// An in-memory collection backed by private inverted indexes.
@@ -67,6 +67,66 @@ impl SearchIndex {
     ) -> Result<Option<Document>, SchemaError> {
         schema.validate(&document)?;
         Ok(self.insert(document))
+    }
+
+    /// Inserts every document in input order, exactly like calling
+    /// [`SearchIndex::insert`] once per document.
+    ///
+    /// Each document is applied before the next is examined, so a later
+    /// document in the batch observes earlier ones. The returned vector has
+    /// one entry per input document, in input order: the document previously
+    /// stored under that key, or `None` when the key was new. An empty batch
+    /// returns an empty vector and changes nothing.
+    pub fn insert_batch<I>(&mut self, documents: I) -> Vec<Option<Document>>
+    where
+        I: IntoIterator<Item = Document>,
+    {
+        documents
+            .into_iter()
+            .map(|document| self.insert(document))
+            .collect()
+    }
+
+    /// Validates the whole batch against the schema, then inserts it.
+    ///
+    /// Every document is checked before the index is touched: each document
+    /// must satisfy `schema` exactly as in
+    /// [`SearchIndex::insert_with_schema`], and no key may appear twice
+    /// within the batch. The first failure is returned as a [`BatchError`]
+    /// carrying the batch position and key, and the index — documents, term
+    /// postings, and field-value postings alike — is left exactly as it was.
+    ///
+    /// On success the documents are applied in input order and the returned
+    /// vector mirrors [`SearchIndex::insert_batch`]: one entry per input
+    /// document holding the previously stored document for that key, or
+    /// `None` when the key was new.
+    pub fn insert_batch_with_schema<I>(
+        &mut self,
+        documents: I,
+        schema: &Schema,
+    ) -> Result<Vec<Option<Document>>, BatchError>
+    where
+        I: IntoIterator<Item = Document>,
+    {
+        let documents: Vec<Document> = documents.into_iter().collect();
+        let mut seen = BTreeSet::new();
+        for (index, document) in documents.iter().enumerate() {
+            let key = document.id();
+            if !seen.insert(key) {
+                return Err(BatchError::DuplicateKey {
+                    index,
+                    key: key.to_owned(),
+                });
+            }
+            if let Err(error) = schema.validate(document) {
+                return Err(BatchError::Schema {
+                    index,
+                    key: key.to_owned(),
+                    error,
+                });
+            }
+        }
+        Ok(self.insert_batch(documents))
     }
 
     pub fn get(&self, id: &str) -> Option<&Document> {
