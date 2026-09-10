@@ -1,11 +1,15 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+
+use crate::FieldValue;
 
 /// A document identified by a stable application-provided key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Document {
     id: String,
     text: String,
+    fields: BTreeMap<String, FieldValue>,
 }
 
 impl Document {
@@ -18,7 +22,14 @@ impl Document {
         Ok(Self {
             id,
             text: text.into(),
+            fields: BTreeMap::new(),
         })
+    }
+
+    /// Attaches a typed field value, replacing any existing value for the name.
+    pub fn with_field(mut self, name: impl Into<String>, value: impl Into<FieldValue>) -> Self {
+        self.fields.insert(name.into(), value.into());
+        self
     }
 
     pub fn id(&self) -> &str {
@@ -27,6 +38,18 @@ impl Document {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Returns the value stored under `name`, if any.
+    pub fn field(&self, name: &str) -> Option<&FieldValue> {
+        self.fields.get(name)
+    }
+
+    /// Iterates over all fields in name order.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, &FieldValue)> {
+        self.fields
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
     }
 }
 

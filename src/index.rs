@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::Document;
+use crate::{Document, Schema, SchemaError};
 
 /// An in-memory collection. Search currently scans the stored documents.
 #[derive(Debug, Default)]
@@ -24,6 +24,20 @@ impl SearchIndex {
     /// Replaces an existing key, returning its previous document if present.
     pub fn insert(&mut self, document: Document) -> Option<Document> {
         self.documents.insert(document.id().to_owned(), document)
+    }
+
+    /// Validates the document against the schema, then inserts it.
+    ///
+    /// Validation runs completely before the index is touched: on failure the
+    /// error is returned and the index is left exactly as it was, including
+    /// any document already stored under the same key.
+    pub fn insert_with_schema(
+        &mut self,
+        document: Document,
+        schema: &Schema,
+    ) -> Result<Option<Document>, SchemaError> {
+        schema.validate(&document)?;
+        Ok(self.insert(document))
     }
 
     pub fn get(&self, id: &str) -> Option<&Document> {
