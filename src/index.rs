@@ -1,7 +1,9 @@
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{Document, FieldFilter, FieldValue, FilterError, Schema, SchemaError};
+use crate::{
+    Document, FacetCount, FacetError, FieldFilter, FieldValue, FilterError, Schema, SchemaError,
+};
 
 /// An in-memory collection backed by private inverted indexes.
 ///
@@ -153,6 +155,71 @@ impl SearchIndex {
             hits = hits.intersection(&term_keys).copied().collect();
         }
         Ok(self.collect_documents(hits))
+    }
+
+    /// Counts how many candidate documents carry each value of `field`,
+    /// returning entries sorted by [`FieldValue`].
+    ///
+    /// Candidates are the whole index, optionally narrowed by body keywords
+    /// and/or field filters: `query` uses the same Unicode-whitespace
+    /// tokenization, lowercasing, and all-tokens matching as
+    /// [`SearchIndex::search`], and `filters` follow the same exact-match AND
+    /// rules as [`SearchIndex::filter_with_fields`]. A `None` query or one
+    /// that tokenizes to nothing applies no keyword constraint, so the
+    /// filtered set is counted as-is.
+    ///
+    /// Documents missing `field` never contribute. With no candidates, or
+    /// candidates that all lack `field`, the result is empty. Validation runs
+    /// before any counting: an undeclared `field` yields
+    /// [`FacetError::UnknownField`], while filter problems surface as
+    /// [`FacetError::Filter`].
+    pub fn facet_counts<I, F>(
+        &self,
+        field: &str,
+        query: Option<&str>,
+        filters: I,
+        schema: &Schema,
+    ) -> Result<Vec<FacetCount>, FacetError>
+    where
+        I: IntoIterator<Item = F>,
+        F: Borrow<FieldFilter>,
+    {
+        if schema.field(field).is_none() {
+            return Err(FacetError::UnknownField(field.to_owned()));
+        }
+        let mut hits = self.matching_keys(filters, schema)?;
+        let query_tokens = query.map(tokens).unwrap_or_default();
+        if !query_tokens.is_empty() {
+            let mut matched: Option<BTreeSet<&str>> = None;
+            for token in &query_tokens {
+                let Some(keys) = self.terms.get(token) else {
+                    return Ok(Vec::new());
+                };
+                let keys: BTreeSet<&str> = keys.iter().map(String::as_str).collect();
+                matched = Some(match matched {
+                    None => keys,
+                    Some(previous) => previous.intersection(&keys).copied().collect(),
+                });
+            }
+            hits = hits
+                .intersection(&matched.unwrap_or_default())
+                .copied()
+                .collect();
+        }
+        let counts = self
+            .field_values
+            .get(field)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|(value, keys)| {
+                        let count = keys.iter().filter(|id| hits.contains(id.as_str())).count();
+                        (count > 0).then(|| FacetCount::new(value.clone(), count))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(counts)
     }
 
     /// Validates every filter against the schema, then intersects their

@@ -18,6 +18,12 @@
 //! be combined with body keywords. Field values never participate in plain
 //! [`SearchIndex::search`].
 //!
+//! Facet counting builds on the same machinery without any query-string
+//! syntax: [`SearchIndex::facet_counts`] takes a declared target field plus
+//! optional body keywords and [`FieldFilter`]s, and reports how many
+//! candidate documents carry each [`FieldValue`] of that field, sorted by
+//! value. Documents missing the target field are not counted.
+//!
 //! ```
 //! use strata_search::{Document, SearchIndex};
 //!
@@ -74,13 +80,39 @@
 //! assert_eq!(hits.iter().map(|doc| doc.id()).collect::<Vec<_>>(), ["guide"]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ```
+//! use strata_search::{Document, FieldFilter, FieldSchema, FieldType, FieldValue, Schema, SearchIndex};
+//!
+//! let mut schema = Schema::new();
+//! schema.add_field(FieldSchema::new("year", FieldType::Integer, false));
+//!
+//! let mut index = SearchIndex::new();
+//! index.insert_with_schema(
+//!     Document::new("guide", "Rust storage guide")?.with_field("year", 2026_i64),
+//!     &schema,
+//! )?;
+//! index.insert_with_schema(
+//!     Document::new("draft", "Rust draft")?.with_field("year", 2025_i64),
+//!     &schema,
+//! )?;
+//!
+//! // Count `year` values across documents whose body mentions "rust".
+//! let counts = index.facet_counts("year", Some("rust"), Vec::<FieldFilter>::new(), &schema)?;
+//! assert_eq!(counts.len(), 2);
+//! assert_eq!(counts[0].value(), &FieldValue::Integer(2025));
+//! assert_eq!(counts[0].count(), 1);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod document;
+mod facet;
 mod filter;
 mod index;
 mod schema;
 
 pub use document::{Document, DocumentError};
+pub use facet::{FacetCount, FacetError};
 pub use filter::{FieldFilter, FilterError};
 pub use index::SearchIndex;
 pub use schema::{FieldSchema, FieldType, FieldValue, Schema, SchemaError};
