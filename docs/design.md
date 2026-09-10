@@ -18,4 +18,6 @@
 
 公开行为以 README 和测试中的契约为准。新增能力时需要明确旧调用的行为、错误边界与可观察结果。没有公开声明的能力不应由调用方假定存在。
 
-结构化字段已实现：`Schema`/`FieldSchema` 声明字段，`FieldValue` 承载值，`insert_with_schema` 保证校验失败时旧文档与检索结果不受影响。字段过滤、查询语法扩展等能力在实现相应功能时确定。
+结构化字段已实现：`Schema`/`FieldSchema` 声明字段，`FieldValue` 承载值，`insert_with_schema` 保证校验失败时旧文档与检索结果不受影响。
+
+字段过滤通过类型化的 `FieldFilter`（字段名 + `FieldValue`）表达精确匹配，不引入查询字符串语法。`SearchIndex` 为字段值维护与正文倒排同构的 `字段名 → 值 → 文档键集合` 倒排，`insert`、替换、`remove` 与正文索引一起同步；`filter_with_fields` 对多个过滤条件取交集，`search_with_fields` 再与正文词项交集，结果按键升序。过滤查询依据调用方提供的 schema 校验字段名与值类型，分别返回 `FilterError::UnknownField` 和 `FilterError::TypeMismatch`。缺失被过滤字段的文档天然不在值倒排中。空过滤列表匹配全部文档，但空正文查询仍不匹配。字段值不进入正文倒排，普通 `search` 语义不变。查询语法扩展等能力在实现相应功能时确定。

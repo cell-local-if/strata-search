@@ -5,7 +5,7 @@ use std::fmt;
 use crate::Document;
 
 /// The type a schema declares for a field.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FieldType {
     Text,
     Integer,
@@ -24,7 +24,7 @@ impl fmt::Display for FieldType {
 }
 
 /// A typed field value stored on a document.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FieldValue {
     Text(String),
     Integer(i64),

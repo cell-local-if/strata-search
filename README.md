@@ -56,6 +56,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - 校验通过时与 `insert` 一样替换同键文档并返回旧文档。
 - 不带字段的文档仍可用 `insert` 直接写入，不做任何 schema 校验；字段不参与词项检索。
 
+## 类型化字段过滤
+
+字段条件不经过查询字符串，而是用 `FieldFilter::new(字段名, 值)` 以类型化值表达精确匹配。`SearchIndex::filter_with_fields` 只按字段过滤，`SearchIndex::search_with_fields` 把正文关键词与字段条件做 AND；多个 `FieldFilter` 之间同样是 AND。所有结果（包括正文+字段组合）都按键升序返回，无匹配返回空 `Vec`。
+
+```rust
+use strata_search::{
+    Document, FieldFilter, FieldSchema, FieldType, Schema, SearchIndex,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut schema = Schema::new();
+    schema.add_field(FieldSchema::new("year", FieldType::Integer, false));
+    schema.add_field(FieldSchema::new("published", FieldType::Boolean, false));
+
+    let mut index = SearchIndex::new();
+    index.insert_with_schema(
+        Document::new("guide", "rust storage guide")?
+            .with_field("year", 2026_i64)
+            .with_field("published", true),
+        &schema,
+    )?;
+
+    let filters = [
+        FieldFilter::new("year", 2026_i64),
+        FieldFilter::new("published", true),
+    ];
+    let hits = index.search_with_fields("rust", &filters, &schema)?;
+    assert_eq!(hits[0].id(), "guide");
+
+    // 无过滤条件时 filter_with_fields 匹配全部文档。
+    let none: [FieldFilter; 0] = [];
+    assert_eq!(index.filter_with_fields(none, &schema)?.len(), 1);
+    Ok(())
+}
+```
+
+字段过滤约定：
+
+- 精确匹配要求类型和值都相同；文本值区分大小写，不做分词或小写转换。
+- 缺失被过滤字段的文档不匹配；空过滤列表匹配全部文档。
+- 过滤在查询时依据传入的 schema 校验：未知字段返回 `FilterError::UnknownField`，值类型与声明不符返回 `FilterError::TypeMismatch`（含期望与实际类型），两类错误可区分，且在校验通过前不检查任何文档。
+- `search_with_fields` 的正文部分沿用 `search` 的全部约定（Unicode 空白分词、小写、全词项、空查询不匹配）；字段值仍不参与普通 `search`。
+- `insert`、`insert_with_schema`、同键替换和 `remove` 都会同步字段过滤数据，包括不经 schema 校验的 `insert`。
+
 ## 开发
 
 使用 `rust-toolchain.toml` 指定的 Rust 1.98.1 工具链及系统链接器。项目没有第三方运行依赖。
