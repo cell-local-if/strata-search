@@ -24,6 +24,13 @@
 //! candidate documents carry each [`FieldValue`] of that field, sorted by
 //! value. Documents missing the target field are not counted.
 //!
+//! Sorted retrieval reuses the same candidate selection:
+//! [`SearchIndex::search_sorted`] takes a declared sort field, a
+//! [`SortDirection`], optional body keywords, and [`FieldFilter`]s, and
+//! returns the matching documents ordered by that field's [`FieldValue`].
+//! Documents missing the sort field come after all valued documents; equal
+//! values fall back to document-key order in both directions.
+//!
 //! ```
 //! use strata_search::{Document, SearchIndex};
 //!
@@ -104,15 +111,46 @@
 //! assert_eq!(counts[0].count(), 1);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ```
+//! use strata_search::{Document, FieldFilter, FieldSchema, FieldType, Schema, SearchIndex, SortDirection};
+//!
+//! let mut schema = Schema::new();
+//! schema.add_field(FieldSchema::new("year", FieldType::Integer, false));
+//!
+//! let mut index = SearchIndex::new();
+//! index.insert_with_schema(
+//!     Document::new("guide", "Rust storage guide")?.with_field("year", 2026_i64),
+//!     &schema,
+//! )?;
+//! index.insert_with_schema(
+//!     Document::new("draft", "Rust draft")?.with_field("year", 2025_i64),
+//!     &schema,
+//! )?;
+//! index.insert_with_schema(Document::new("notes", "Rust notes")?, &schema)?;
+//!
+//! // Newest first; `notes` has no `year` and sorts last.
+//! let hits = index.search_sorted(
+//!     "year",
+//!     SortDirection::Descending,
+//!     Some("rust"),
+//!     Vec::<FieldFilter>::new(),
+//!     &schema,
+//! )?;
+//! assert_eq!(hits.iter().map(|doc| doc.id()).collect::<Vec<_>>(), ["guide", "draft", "notes"]);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod document;
 mod facet;
 mod filter;
 mod index;
 mod schema;
+mod sort;
 
 pub use document::{Document, DocumentError};
 pub use facet::{FacetCount, FacetError};
 pub use filter::{FieldFilter, FilterError};
 pub use index::SearchIndex;
 pub use schema::{FieldSchema, FieldType, FieldValue, Schema, SchemaError};
+pub use sort::{SortDirection, SortError};

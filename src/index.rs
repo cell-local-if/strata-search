@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     Document, FacetCount, FacetError, FieldFilter, FieldValue, FilterError, Schema, SchemaError,
+    SortDirection, SortError,
 };
 
 /// An in-memory collection backed by private inverted indexes.
@@ -187,25 +188,7 @@ impl SearchIndex {
         if schema.field(field).is_none() {
             return Err(FacetError::UnknownField(field.to_owned()));
         }
-        let mut hits = self.matching_keys(filters, schema)?;
-        let query_tokens = query.map(tokens).unwrap_or_default();
-        if !query_tokens.is_empty() {
-            let mut matched: Option<BTreeSet<&str>> = None;
-            for token in &query_tokens {
-                let Some(keys) = self.terms.get(token) else {
-                    return Ok(Vec::new());
-                };
-                let keys: BTreeSet<&str> = keys.iter().map(String::as_str).collect();
-                matched = Some(match matched {
-                    None => keys,
-                    Some(previous) => previous.intersection(&keys).copied().collect(),
-                });
-            }
-            hits = hits
-                .intersection(&matched.unwrap_or_default())
-                .copied()
-                .collect();
-        }
+        let hits = self.candidate_keys(query, filters, schema)?;
         let counts = self
             .field_values
             .get(field)
@@ -220,6 +203,93 @@ impl SearchIndex {
             })
             .unwrap_or_default();
         Ok(counts)
+    }
+
+    /// Returns candidate documents ordered by the value of `field`.
+    ///
+    /// Candidates are selected exactly as in [`SearchIndex::facet_counts`]:
+    /// the whole index, optionally narrowed by body keywords (`query` uses the
+    /// same tokenization and all-tokens matching as [`SearchIndex::search`]; a
+    /// `None` or tokenless query applies no keyword constraint) and/or exact
+    /// [`FieldFilter`]s combined with AND.
+    ///
+    /// Documents carrying `field` come first, ordered by their [`FieldValue`]
+    /// in `direction`; documents missing `field` follow, in document-key
+    /// order, in either direction. Documents sharing one value are ordered by
+    /// document key, and [`SortDirection::Descending`] reverses only the
+    /// value order, never that key order. Validation runs before any sorting:
+    /// an undeclared `field` yields [`SortError::UnknownField`], while filter
+    /// problems surface as [`SortError::Filter`].
+    pub fn search_sorted<I, F>(
+        &self,
+        field: &str,
+        direction: SortDirection,
+        query: Option<&str>,
+        filters: I,
+        schema: &Schema,
+    ) -> Result<Vec<&Document>, SortError>
+    where
+        I: IntoIterator<Item = F>,
+        F: Borrow<FieldFilter>,
+    {
+        if schema.field(field).is_none() {
+            return Err(SortError::UnknownField(field.to_owned()));
+        }
+        let hits = self.candidate_keys(query, filters, schema)?;
+        let mut sorted: Vec<&str> = Vec::with_capacity(hits.len());
+        if let Some(values) = self.field_values.get(field) {
+            let values: Vec<&BTreeSet<String>> = match direction {
+                SortDirection::Ascending => values.values().collect(),
+                SortDirection::Descending => values.values().rev().collect(),
+            };
+            for keys in values {
+                sorted.extend(
+                    keys.iter()
+                        .map(String::as_str)
+                        .filter(|id| hits.contains(id)),
+                );
+            }
+        }
+        let valued: BTreeSet<&str> = sorted.iter().copied().collect();
+        sorted.extend(hits.iter().copied().filter(|id| !valued.contains(id)));
+        Ok(sorted
+            .into_iter()
+            .filter_map(|id| self.documents.get(id))
+            .collect())
+    }
+
+    /// Narrows the whole index by optional body keywords and field filters.
+    /// A `None` or tokenless `query` applies no keyword constraint.
+    fn candidate_keys<'s, I, F>(
+        &'s self,
+        query: Option<&str>,
+        filters: I,
+        schema: &Schema,
+    ) -> Result<BTreeSet<&'s str>, FilterError>
+    where
+        I: IntoIterator<Item = F>,
+        F: Borrow<FieldFilter>,
+    {
+        let mut hits = self.matching_keys(filters, schema)?;
+        let query_tokens = query.map(tokens).unwrap_or_default();
+        if !query_tokens.is_empty() {
+            let mut matched: Option<BTreeSet<&str>> = None;
+            for token in &query_tokens {
+                let Some(keys) = self.terms.get(token) else {
+                    return Ok(BTreeSet::new());
+                };
+                let keys: BTreeSet<&str> = keys.iter().map(String::as_str).collect();
+                matched = Some(match matched {
+                    None => keys,
+                    Some(previous) => previous.intersection(&keys).copied().collect(),
+                });
+            }
+            hits = hits
+                .intersection(&matched.unwrap_or_default())
+                .copied()
+                .collect();
+        }
+        Ok(hits)
     }
 
     /// Validates every filter against the schema, then intersects their
